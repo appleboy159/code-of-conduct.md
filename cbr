@@ -1,0 +1,146 @@
+# .github/workflows/release.yaml
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+    contents: write
+    packages: write
+
+jobs:
+  test-build:
+    name: Build test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Setup GO
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.18'
+
+    - name: Extract CLI Name and Version
+      run: |
+        # Get the tag name from the event payload
+        TAG_NAME=${{ github.ref_name }}
+        
+        # Use a regular expression to extract the CLI name and version
+        if [[ $TAG_NAME =~ ^([^-]+)-([^-]+)$ ]]; then
+          CLI_NAME="${BASH_REMATCH[1]}"
+          CLI_VERSION="${BASH_REMATCH[2]}"
+          
+          echo "CLI Name: $CLI_NAME"
+          echo "CLI Version: $CLI_VERSION"
+
+          # Add to github env
+          echo "CLI_NAME=$CLI_NAME" >> $GITHUB_ENV
+          echo "CLI_VERSION=$CLI_VERSION" >> $GITHUB_ENV
+          
+          # Write CLI_NAME and CLI_VERSION to a file
+          echo "CLI_NAME=$CLI_NAME" > cli-info.env
+          echo "CLI_VERSION=$CLI_VERSION" >> cli-info.env
+        else
+          echo "Invalid tag format: $TAG_NAME"
+          exit 1
+        fi
+    
+    - name: Build
+      run: go build ./${{ env.CLI_NAME }}/cmd/
+
+    - name: Upload CLI Info
+      uses: actions/upload-artifact@v3
+      with:
+        name: cli-info
+        path: cli-info.env
+        retention-days: 1
+
+  create-release:
+    name: Create github release
+    needs: test-build
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Download CLI Info
+      uses: actions/download-artifact@v3
+      with:
+        name: cli-info
+
+    - name: Setup env vars
+      run: |
+        source cli-info.env
+        echo "CLI_NAME=$CLI_NAME" >> $GITHUB_ENV
+        echo "CLI_VERSION=$CLI_VERSION" >> $GITHUB_ENV
+
+    - name: Generate changelog
+      run: |
+        source cli-info.env
+        ./changelog.sh $CLI_NAME $CLI_VERSION > CHANGES.md
+
+    - name: Create release with changelog
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: CHANGES.md
+        files: |
+          LICENSE
+          newfile.txt
+
+  releases-matrix:
+    name: Release
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin, solaris, openbsd, netbsd, freebsd, dragonfly]
+        goarch: ["386", amd64, arm, arm64]
+        exclude:
+          - goarch: "386"
+            goos: darwin
+          - goarch: "386"
+            goos: dragonfly
+          - goarch: "386"
+            goos: solaris
+          - goarch: arm
+            goos: darwin
+          - goarch: arm
+            goos: dragonfly
+          - goarch: arm
+            goos: solaris
+          - goarch: arm64
+            goos: windows
+          - goarch: arm64
+            goos: dragonfly
+          - goarch: arm64
+            goos: solaris
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Download CLI Info
+      uses: actions/download-artifact@v3
+      with:
+        name: cli-info
+
+    - name: Setup env vars
+      run: |
+        source cli-info.env
+        echo "CLI_NAME=$CLI_NAME" >> $GITHUB_ENV
+        echo "CLI_VERSION=$CLI_VERSION" >> $GITHUB_ENV
+
+    - name: Upload assets
+      uses: wangyoucao577/go-release-action@v1
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        goos: ${{ matrix.goos }}
+        goarch: ${{ matrix.goarch }}
+        goversion: "1.18"
+        project_path: "./${{ env.CLI_NAME }}/cmd"
+        binary_name: "${{ env.CLI_NAME }}_${{ env.CLI_VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+        asset_name: "${{ env.CLI_NAME }}_${{ env.CLI_VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+        md5sum: FALSE
