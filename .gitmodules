@@ -1,0 +1,3 @@
+[submodule "monic-aspri"]
+	path = monic-aspri
+	url = https://gitlab.com/monic-goela_djawe27/monic-aspri.git
